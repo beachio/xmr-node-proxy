@@ -1,0 +1,46 @@
+{
+  "pools": [
+    {
+      "hostname": "pool.coinsta.sh",
+      "port": 5555,
+      "ssl": false,
+      "allowSelfSignedSSL": false,
+      "share": 80,
+      "username": "44nYURX2hgwcLwBkxMVVQAJsNHKk8LbqAG2PCTLZFjiZHPnTscPFnvwLxqdPKb5HYq1ZbS24EwtBt3mLFmdSR8EJ2z8GHf4",
+      "password": "proxy:test_proxy@test.com",
+      "keepAlive": true,
+      "coin": "xmr",
+      "default": true
+    }
+  ],
+  "listeningPorts": [
+    {
+      "port": 3334,
+      "ssl": false,
+      "diff": 1000,
+      "coin": "xmr"
+    },
+    {
+      "port": 5556,
+      "ssl": false,
+      "diff": 5000,
+      "coin": "xmr"
+   },
+   {
+      "port": 7778,
+      "ssl": false,
+      "diff": 10000,
+      "coin": "xmr"
+  }
+  ],
+  "bindAddress": "0.0.0.0",
+  "developerShare": 0,
+  "daemonAddress": "127.0.0.1:18081",
+  "coinSettings": {
+    "xmr":{
+      "minDiff": 100,
+      "maxDiff": 300000,
+      "shareTargetTime": 15
+    }
+  }
+}
