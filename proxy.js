@@ -76,19 +76,78 @@ function masterMessageHandler(worker, message, handle) {
             case 'workerStats':
                 activeWorkers[worker.id][message.minerID] = message.data;
                 break;
+            case 'newPool':
+                newPoolStart(message)
+                break;
         }
     }
 }
+function newPoolStart(msg) {
+
+    let poolName = global.config.defaultConfigs.hostname + ':' + msg.password.split(':')[0]+':' + msg.port;
+    let poolPort = 0;
+    if (msg.port == 3334) {
+        poolPort = 3333;
+    }
+    else {
+        if (msg.port == 5556) {
+            poolPort = 5555;
+        }
+        else
+            poolPort = 7777;
+
+    }
+    let poolData = {
+        "password": msg.password,
+        "port": poolPort,
+        "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL
+    };
+    activePools[poolName] = new Pool(poolData);
+    activePools[poolName].connect();
+    if (Object.keys(defaultPools).length == 0) {
+        defaultPools["xmr"] = poolName;
+    }
+    for (let worker in cluster.workers){
+        if (cluster.workers.hasOwnProperty(worker)){
+            cluster.workers[worker].send({type: 'newPoolSlave', password: msg.password, port: msg.port} );
+        }
+    }
+}
+
+function newPoolSlaveStart(msg)
+{
+    let poolName = global.config.defaultConfigs.hostname + ':' + msg.password.split(':')[0] + ':' + msg.port;
+    let poolPort = 0;
+    if (msg.port == 3334) {
+        poolPort = 3333;
+    }
+    else {
+        if (msg.port == 5556) {
+            poolPort = 5555;
+        }
+        else
+            poolPort = 7777;
+
+    }
+    let poolData = {
+        "password": msg.password,
+        "port": poolPort,
+        "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL
+    };
+    activePools[poolName] = new Pool(poolData);
+}
+
 
 function slaveMessageHandler(message) {
     switch (message.type) {
         case 'newBlockTemplate':
             if (message.host in activePools){
+                let hostForMessage = message.host.split(":")[0];
                 if(activePools[message.host].activeBlocktemplate){
-                    debug.workers(`Received a new block template for ${message.host} and have one in cache.  Storing`);
+                    debug.workers(`Received a new block template for ${hostForMessage} and have one in cache.  Storing`);
                     activePools[message.host].pastBlockTemplates.enq(activePools[message.host].activeBlocktemplate);
                 } else {
-                    debug.workers(`Received a new block template for ${message.host} do not have one in cache.`);
+                    debug.workers(`Received a new block template for ${hostForMessage} do not have one in cache.`);
                 }
                 activePools[message.host].activeBlocktemplate = new activePools[message.host].coinFuncs.BlockTemplate(message.data);
                 for (let miner in activeMiners){
@@ -104,11 +163,7 @@ function slaveMessageHandler(message) {
         case 'poolState':
             message.data.forEach(function(hostname){
                 if(!(hostname in activePools)){
-                    global.config.pools.forEach(function(poolData){
-                        if (hostname === poolData.hostname){
-                            activePools[hostname] = new Pool(poolData);
-                        }
-                    });
+
                 }
             });
             break;
@@ -130,6 +185,9 @@ function slaveMessageHandler(message) {
                 activePools[message.pool].active = true;
                 process.send({type: 'needPoolState'});
             }
+            break;
+        case 'newPoolSlave':
+            newPoolSlaveStart(message);
             break;
     }
 }
@@ -176,16 +234,16 @@ function Pool(poolData){
         "id":1
      }
      */
-    this.hostname = poolData.hostname;
+    this.hostname = global.config.defaultConfigs.hostname;
     this.port = poolData.port;
-    this.ssl = poolData.ssl;
-    this.share = poolData.share;
-    this.username = poolData.username;
+    this.ssl = global.config.defaultConfigs.ssl;
+    this.share = global.config.defaultConfigs.share;
+    this.username = global.config.defaultConfigs.username;
     this.password = poolData.password;
-    this.keepAlive = poolData.keepAlive;
-    this.default = poolData.default;
-    this.devPool = poolData.hasOwnProperty('devPool') && poolData.devPool === true;
-    this.coin = poolData.coin;
+    this.keepAlive = global.config.defaultConfigs.keepAlive;
+    this.default = false;
+    this.devPool = false;
+    this.coin = global.config.defaultConfigs.coin;
     this.pastBlockTemplates = support.circularBuffer(4);
     this.coinFuncs = require(`./lib/${this.coin}.js`)();
     this.activeBlocktemplate = null;
@@ -195,17 +253,19 @@ function Pool(poolData){
     this.poolJobs = {};
     this.socket = null;
     this.allowSelfSignedSSL = true;
+    this.initialized = false;
     // Partial checks for people whom havn't upgraded yet
     if (poolData.hasOwnProperty('allowSelfSignedSSL')){
-        this.allowSelfSignedSSL = !poolData.allowSelfSignedSSL;
+        this.allowSelfSignedSSL = !global.config.defaultConfigs.allowSelfSignedSSL;
     }
 
     this.connect = function(){
         for (let worker in cluster.workers){
             if (cluster.workers.hasOwnProperty(worker)){
-                cluster.workers[worker].send({type: 'disablePool', pool: this.hostname});
+                cluster.workers[worker].send({type: 'disablePool', pool: this.hostname + ':' + this.password.split(':')[0] + ':' + (this.port + 1)});
             }
         }
+
         try {
             if (this.socket !== null){
                 this.socket.end();
@@ -218,14 +278,14 @@ function Pool(poolData){
         this.active = false;
         if (this.ssl){
             this.socket = tls.connect(this.port, this.hostname, {rejectUnauthorized: this.allowSelfSignedSSL}).on('connect', ()=>{
-                poolSocket(this.hostname);
+                poolSocket(this.hostname + ":" + this.password.split(":")[0] + ":" +(this.port + 1));
             }).on('error', (err)=>{
                 this.connect();
                 console.warn(`${global.threadName}Socket error from ${this.hostname} ${err}`);
             });
         } else {
             this.socket = net.connect(this.port, this.hostname).on('connect', ()=>{
-                poolSocket(this.hostname);
+                poolSocket(this.hostname + ":" + this.password.split(":")[0]+ ":" +(this.port + 1));
             }).on('error', (err)=>{
                 this.connect();
                 console.warn(`${global.threadName}Socket error from ${this.hostname} ${err}`);
@@ -265,9 +325,10 @@ function Pool(poolData){
         this.active = true;
         for (let worker in cluster.workers){
             if (cluster.workers.hasOwnProperty(worker)){
-                cluster.workers[worker].send({type: 'enablePool', pool: this.hostname});
+                    cluster.workers[worker].send({type: 'enablePool', pool: this.hostname + ':' + this.password.split(':')[0] + ':' + (this.port + 1)});
             }
         }
+
     };
     this.sendShare = function (worker, shareData) {
         //btID - Block template ID in the poolJobs circ buffer.
@@ -295,13 +356,6 @@ The master performs the following tasks:
 4. Manage and suggest miner changes in order to achieve correct h/s balancing between the various systems.
  */
 function connectPools(){
-    global.config.pools.forEach(function (poolData) {
-        if (activePools.hasOwnProperty(poolData.hostname)){
-            return;
-        }
-        activePools[poolData.hostname] = new Pool(poolData);
-        activePools[poolData.hostname].connect();
-    });
     let seen_coins = {};
     if (global.config.developerShare > 0){
         for (let pool in activePools){
@@ -649,20 +703,20 @@ function poolSocket(hostname){
                         }
                     }
 
-                    console.warn(`${global.threadName}Socket error from ${pool.hostname} Message: ${message}`);
+                    console.warn(`${global.threadName}Socket error from ${pool.hostname.split(':')[0]} Message: ${message}`);
                     socket.destroy();
 
                     break;
                 }
-                handlePoolMessage(jsonData, pool.hostname);
+                handlePoolMessage(jsonData, pool.hostname + ':' + pool.password.split(':')[0] + ':' + (pool.port +1));
             }
             dataBuffer = incomplete;
         }
     }).on('error', (err) => {
-        activePools[pool.hostname].connect();
+        activePools[pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.port +1)].connect();
         console.warn(`${global.threadName}Socket error from ${pool.hostname} ${err}`);
     }).on('close', () => {
-        activePools[pool.hostname].connect();
+        activePools[pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.port +1)].connect();
         console.warn(`${global.threadName}Socket closed from ${pool.hostname}`);
     });
     socket.setKeepAlive(true);
@@ -715,8 +769,10 @@ function handleNewBlockTemplate(blockTemplate, hostname){
         pool.pastBlockTemplates.enq(pool.activeBlocktemplate);
     }
     pool.activeBlocktemplate = new pool.coinFuncs.MasterBlockTemplate(blockTemplate);
-    for (let id in cluster.workers){
-        if (cluster.workers.hasOwnProperty(id)){
+
+    activePools[hostname].initialized = true;
+    for (let id in cluster.workers) {
+        if (cluster.workers.hasOwnProperty(id)) {
             cluster.workers[id].send({
                 host: hostname,
                 type: 'newBlockTemplate',
@@ -724,6 +780,7 @@ function handleNewBlockTemplate(blockTemplate, hostname){
             });
         }
     }
+
 }
 
 // Miner Definition
@@ -753,7 +810,7 @@ function Miner(id, params, ip, pushMessage, portData, minerSocket) {
     this.fixed_diff = false;
     this.difficulty = portData.diff;
     this.connectTime = Date.now();
-    this.pool = defaultPools[portData.coin];
+    this.pool = global.config.defaultConfigs.hostname + ":" + this.password.split(":")[0] + ":" + portData.port;
 
     if (diffSplit.length === 2) {
         this.fixed_diff = true;
@@ -860,6 +917,7 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
                 sendReply(miner.error);
                 return;
             }
+
             process.send({type: 'newMiner', data: miner.port});
             activeMiners[minerId] = miner;
             sendReply(null, {
@@ -952,6 +1010,18 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
     }
 }
 
+function setupPools(method, params, ip, portData, sendReply, pushMessage, minerSocket) {
+    if (method == 'login'){
+        let poolName = global.config.defaultConfigs.hostname + ':' + params.pass.split(':')[0] + ':' +portData.port;
+        if (!activePools.hasOwnProperty(poolName)) {
+            process.send({type: "newPool", password: params.pass, port: portData.port});
+
+        }
+        setTimeout(function(){handleMinerData(method,params, ip, portData, sendReply, pushMessage, minerSocket)}, 4000);
+    }
+    else {handleMinerData(method,params, ip, portData, sendReply, pushMessage, minerSocket);}
+}
+
 function activatePorts() {
     /*
      Reads the current open ports, and then activates any that aren't active yet
@@ -989,7 +1059,7 @@ function activatePorts() {
                 debug.miners(`Data sent to miner (sendReply): ${sendData}`);
                 socket.write(sendData);
             };
-            handleMinerData(jsonData.method, jsonData.params, socket.remoteAddress, portData, sendReply, pushMessage, minerSocket);
+            setupPools(jsonData.method, jsonData.params, socket.remoteAddress, portData, sendReply, pushMessage, minerSocket);
             };
 
         function socketConn(socket) {
@@ -1152,21 +1222,7 @@ if (cluster.isMaster) {
     setInterval(enumerateWorkerStats, 15000);
     setInterval(balanceWorkers, 90000);
 } else {
-    /*
-    setInterval(checkAliveMiners, 30000);
-    setInterval(retargetMiners, global.config.pool.retargetTime * 1000);
-    */
     process.on('message', slaveMessageHandler);
-    global.config.pools.forEach(function(poolData){
-        activePools[poolData.hostname] = new Pool(poolData);
-        if (poolData.default){
-            defaultPools[poolData.coin] = poolData.hostname;
-        }
-        if (!activePools.hasOwnProperty(activePools[poolData.hostname].coinFuncs.devPool.hostname)){
-            activePools[activePools[poolData.hostname].coinFuncs.devPool.hostname] = new Pool(activePools[poolData.hostname].coinFuncs.devPool);
-        }
-    });
-    process.send({type: 'needPoolState'});
     setInterval(function(){
         for (let minerID in activeMiners){
             if (activeMiners.hasOwnProperty(minerID)){
