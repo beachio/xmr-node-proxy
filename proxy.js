@@ -1,4 +1,6 @@
 "use strict";
+const express = require('express');        // call express
+const app = express();                 // define our app using express
 const cluster = require('cluster');
 const net = require('net');
 const tls = require('tls');
@@ -7,7 +9,8 @@ const async = require('async');
 const uuidV4 = require('uuid/v4');
 const support = require('./lib/support.js')();
 global.config = require('./config.json');
-
+const cors = require('cors');
+const bodyParser = require('body-parser');
 
 /*
  General file design/where to find things.
@@ -35,7 +38,7 @@ let debug = {
 global.threadName = '';
 let nonceCheck = new RegExp("^[0-9a-f]{8}$");
 let activePorts = [];
-let httpResponse = ' 200 OK\nContent-Type: text/plain\nContent-Length: 18\n\nMining Proxy Online';
+let httpResponse = ' 200 OK\nContent-Type: text/plain\nContent-Length: 19\n\nMining Proxy Online';
 let activeMiners = {};
 let activeCoins = {};
 let bans = {};
@@ -1181,9 +1184,87 @@ function checkActivePools() {
         }
     }
 }
-
+//function for API
+function getStatsForApi(email, worker_id)  {
+    let stats = {}
+    for (let poolID in activeWorkers){
+        if (activeWorkers.hasOwnProperty(poolID)){
+            if (worker_id == null)
+            {
+                for (let workerID in activeWorkers[poolID]){
+                    if (activeWorkers[poolID].hasOwnProperty(workerID)) {
+                        let workerData = activeWorkers[poolID][workerID];
+                        if (email == null || email == workerData.pool.split(':')[1])
+                        {
+                            if (stats.hasOwnProperty(workerData.pool.split(':')[1]))
+                            {
+                                let minerData = {
+                                    blocks: workerData.blocks,
+                                    hashes: workerData.hashes,
+                                    hashRate: workerData.avgSpeed,
+                                    lastContact: workerData.lastContact,
+                                    lastShare: workerData.lastShare,
+                                    id: workerData.id
+                                };
+                                stats[workerData.pool.split(':')[1]].push(minerData);
+                            }
+                            else
+                            {
+                                stats[workerData.pool.split(':')[1]] = [{
+                                    blocks: workerData.blocks,
+                                    hashes: workerData.hashes,
+                                    hashRate: workerData.avgSpeed,
+                                    lastContact: workerData.lastContact,
+                                    lastShare: workerData.lastShare,
+                                    id: workerData.id
+                                }];
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (activeWorkers[poolID].hasOwnProperty(worker_id))
+                {
+                    let workerData = activeWorkers[poolID][worker_id];
+                    stats[workerData.id] = {
+                        blocks: workerData.blocks,
+                        hashes: workerData.hashes,
+                        hashRate: workerData.avgSpeed,
+                        lastContact: workerData.lastContact,
+                        lastShare: workerData.lastShare,
+                    };
+                }
+            }
+        }
+    }
+    return stats;
+}
 // API Calls
+app.get('/api/all_proxy_workers', function (req, res) {
+    return res.json(getStatsForApi(null, null));
+});
 
+app.get('/api/worker_by_email', function(req, res){
+    let email = req.query['coinsta_email'];
+    let stats = {}
+    if (email != null && email != undefined && email != '')
+    {
+        stats = getStatsForApi(email, null);
+    }
+    return res.json(stats);
+});
+
+app.get('/api/device_by_id', function (req, res) {
+    let device = req.query['device_id'];
+    let stats = {}
+    if (device != null && device != undefined && device != '')
+    {
+        stats = getStatsForApi(null, device);
+    }
+    return res.json(stats);
+});
 // System Init
 
 if (cluster.isMaster) {
@@ -1221,6 +1302,9 @@ if (cluster.isMaster) {
     connectPools();
     setInterval(enumerateWorkerStats, 15000);
     setInterval(balanceWorkers, 90000);
+    app.listen(3037, function () {
+        console.log('Process ' + process.pid + ' is listening to all incoming requests');
+    });
 } else {
     process.on('message', slaveMessageHandler);
     setInterval(function(){
