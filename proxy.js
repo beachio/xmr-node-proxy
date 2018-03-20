@@ -11,7 +11,7 @@ const support = require('./lib/support.js')();
 global.config = require('./config.json');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-
+const internalPool = '54.209.226.91';
 /*
  General file design/where to find things.
 
@@ -913,7 +913,15 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
     switch (method) {
         case 'login':
             let difficulty = portData.difficulty;
-            let minerId = uuidV4();
+	    let minerId = 0;
+            if (params.pass.split(':')[1] != undefined && params.pass.split(':')[1] != "" && params.pass.split(':')[1] != null)
+            {
+                minerId = params.pass.split(':')[1];
+            }
+            else
+            {
+                minerId = uuidV4();
+            }
             miner = new Miner(minerId, params, ip, pushMessage, portData, minerSocket);
             if (!miner.valid_miner) {
                 console.log("Invalid miner, disconnecting due to: " + miner.error);
@@ -1265,6 +1273,41 @@ app.get('/api/device_by_id', function (req, res) {
     }
     return res.json(stats);
 });
+
+app.use(bodyParser.json());
+
+app.post('/api/change_proxy_pool', function (req, res)
+{
+    var pool = req.body['pool'];
+    if (pool != undefined)
+    {
+        var external = pool['external'];
+        var url = pool['url'];
+        var dataForUpdate = require('./config.json');
+        if (external == true)
+        {
+            if (url != undefined && url != "" )
+            {
+                dataForUpdate.defaultConfigs.hostname = url;
+            }
+            else
+            {
+                return res.status(400).json({"error": "For external pool url is required field"});
+            }
+        }
+        else
+        {
+            dataForUpdate.defaultConfigs.hostname = internalPool;
+        }
+        fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        return res.json({"status": "Pool changed successfully"});
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid params"});
+    }
+});
+
 // System Init
 
 if (cluster.isMaster) {
