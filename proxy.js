@@ -12,6 +12,7 @@ global.config = require('./config.json');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const internalPool = '54.209.226.91';
+const exec = require('child_process').exec;
 /*
  General file design/where to find things.
 
@@ -100,8 +101,10 @@ function newPoolStart(msg) {
             poolPort = 7777;
 
     }
+    console.log(msg.wallet);
     let poolData = {
         "password": msg.password,
+	"wallet": msg.wallet,
         "port": poolPort,
         "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL
     };
@@ -112,7 +115,7 @@ function newPoolStart(msg) {
     }
     for (let worker in cluster.workers){
         if (cluster.workers.hasOwnProperty(worker)){
-            cluster.workers[worker].send({type: 'newPoolSlave', password: msg.password, port: msg.port} );
+            cluster.workers[worker].send({type: 'newPoolSlave', password: msg.password, port: msg.port, wallet: msg.wallet} );
         }
     }
 }
@@ -135,7 +138,8 @@ function newPoolSlaveStart(msg)
     let poolData = {
         "password": msg.password,
         "port": poolPort,
-        "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL
+        "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL,
+	"wallet": msg.wallet
     };
     activePools[poolName] = new Pool(poolData);
 }
@@ -241,7 +245,7 @@ function Pool(poolData){
     this.port = poolData.port;
     this.ssl = global.config.defaultConfigs.ssl;
     this.share = global.config.defaultConfigs.share;
-    this.username = global.config.defaultConfigs.username;
+    this.username = poolData.wallet == undefined ? global.config.defaultConfigs.username : poolData.wallet;
     this.password = poolData.password;
     this.keepAlive = global.config.defaultConfigs.keepAlive;
     this.default = false;
@@ -1025,7 +1029,7 @@ function setupPools(method, params, ip, portData, sendReply, pushMessage, minerS
     if (method == 'login'){
         let poolName = global.config.defaultConfigs.hostname + ':' + params.pass.split(':')[0] + ':' +portData.port;
         if (!activePools.hasOwnProperty(poolName)) {
-            process.send({type: "newPool", password: params.pass, port: portData.port});
+            process.send({type: "newPool", password: params.pass, port: portData.port, wallet: params.login});
 
         }
         setTimeout(function(){handleMinerData(method,params, ip, portData, sendReply, pushMessage, minerSocket)}, 4000);
@@ -1300,6 +1304,9 @@ app.post('/api/change_proxy_pool', function (req, res)
             dataForUpdate.defaultConfigs.hostname = internalPool;
         }
         fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        setTimeout(function(){
+            exec('pm2 restart proxy');
+        }, 10000);
         return res.json({"status": "Pool changed successfully"});
     }
     else
