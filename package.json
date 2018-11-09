@@ -1,6 +1,6 @@
 {
   "name": "xmr-node-proxy",
-  "version": "0.0.1",
+  "version": "0.3.2",
   "description": "Node proxy for XMR pools based on nodejs-pool, should support any coins that nodejs-pool does with little work",
   "main": "proxy.js",
   "scripts": {
@@ -8,35 +8,25 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/snipa22/xmr-node-proxy.git"
+    "url": "git+https://github.com/MoneroOcean/xmr-node-proxy.git"
   },
-  "author": "Alexander Blair",
+  "author": "Multiple",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/snipa22/xmr-node-proxy/issues"
+    "url": "https://github.com/MoneroOcean/xmr-node-proxy/issues"
   },
-  "homepage": "https://github.com/snipa22/xmr-node-proxy#readme",
+  "homepage": "https://github.com/MoneroOcean/xmr-node-proxy#readme",
   "dependencies": {
     "async": "2.1.4",
     "bignum": "^0.12.5",
-    "body-parser": "^1.16.0",
     "circular-buffer": "1.0.2",
-    "cluster": "0.7.7",
-    "cors": "^2.8.1",
-    "crypto": "0.0.3",
-    "debug": "2.5.1",
+    "debug": "2.6.9",
     "express": "4.14.0",
-    "jsonwebtoken": "^7.2.1",
     "minimist": "1.2.0",
-    "moment": "2.17.1",
-    "range": "0.0.3",
+    "moment": "2.21.0",
     "request": "^2.79.0",
-    "request-json": "0.6.1",
-    "sprintf-js": "^1.0.3",
-    "uuid": "3.0.1"
-  },
-  "optionalDependencies": {
-    "cryptonote-util": "git://github.com/Snipa22/node-cryptonote-util.git#xmr-Nan-2.0",
-    "multi-hashing": "git+https://github.com/Snipa22/node-multi-hashing-aesni.git"
+    "uuid": "3.0.1",
+    "cryptoforknote-util": "git+https://github.com/MoneroOcean/node-cryptoforknote-util.git#v3.0.0",
+    "cryptonight-hashing": "git+https://github.com/MoneroOcean/node-cryptonight-hashing.git#v3.0.5"
   }
 }

@@ -1,60 +1,68 @@
 {
   "pools": [
     {
+      "hostname": "gulf.moneroocean.stream",
+      "port": 10032,
+      "ssl": false,
+      "allowSelfSignedSSL": false,
+      "share": 100,
+      "username": "44qJYxdbuqSKarYnDSXB6KLbsH4yR65vpJe3ELLDii9i4ZgKpgQXZYR4AMJxBJbfbKZGWUxZU42QyZSsP4AyZZMbJBCrWr1",
+      "password": "proxy",
+      "keepAlive": true,
+      "algo": "cn/2",
+      "blob_type": "cryptonote",
+      "default": true
+    },
+    {
       "hostname": "pool.supportxmr.com",
       "port": 7777,
       "ssl": false,
       "allowSelfSignedSSL": false,
-      "share": 80,
-      "username": "46XWBqE1iwsVxSDP1qDrxhE1XvsZV6eALG5LwnoMdjbT4GPdy2bZTb99kagzxp2MMjUamTYZ4WgvZdFadvMimTjvR6Gv8hL",
-      "password": "proxy:totally.valid@snipanet.com",
+      "share": 0,
+      "username": "44qJYxdbuqSKarYnDSXB6KLbsH4yR65vpJe3ELLDii9i4ZgKpgQXZYR4AMJxBJbfbKZGWUxZU42QyZSsP4AyZZMbJBCrWr1",
+      "password": "proxy",
       "keepAlive": true,
-      "coin": "xmr",
+      "algo": "cn/2",
+      "blob_type": "cryptonote",
       "default": false
-    },
-    {
-      "hostname": "mine.xmrpool.net",
-      "port": 7778,
-      "ssl": false,
-      "allowSelfSignedSSL": false,
-      "share": 20,
-      "username": "46XWBqE1iwsVxSDP1qDrxhE1XvsZV6eALG5LwnoMdjbT4GPdy2bZTb99kagzxp2MMjUamTYZ4WgvZdFadvMimTjvR6Gv8hL",
-      "password": "proxy:totally.valid@snipanet.com",
-      "keepAlive": true,
-      "coin": "xmr",
-      "default": true
     }
   ],
   "listeningPorts": [
     {
       "port": 8080,
       "ssl": false,
-      "diff": 5000,
-      "coin": "xmr"
+      "diff": 5000
     },
     {
       "port": 8443,
       "ssl": true,
-      "diff": 5000,
-      "coin": "xmr"
+      "diff": 5000
     },
     {
       "port": 3333,
       "ssl": false,
-      "diff": 10000,
-      "coin": "xmr"
+      "diff": 10000
     }
   ],
   "bindAddress": "0.0.0.0",
   "developerShare": 1,
   "daemonAddress": "127.0.0.1:18081",
+  "accessControl": {
+    "enabled": false,
+    "controlFile": "accessControl.json"
+  },
+  "httpEnable": false,
+  "httpAddress": "127.0.0.1",
+  "httpPort": "8081",
+  "httpUser": "",
+  "httpPass": "",
+  "addressWorkerID": false,
+  "minerInactivityTime": 120,
+  "keepOfflineMiners": 0,
+  "refreshTime": 30,
+  "theme": "light",
   "coinSettings": {
     "xmr":{
-      "minDiff": 100,
-      "maxDiff": 300000,
-      "shareTargetTime": 15
-    },
-    "aeon":{
       "minDiff": 100,
       "maxDiff": 300000,
       "shareTargetTime": 15

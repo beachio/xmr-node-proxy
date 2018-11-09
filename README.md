@@ -1,11 +1,28 @@
 # xmr-node-proxy
 
+:warning: **[Monero will change PoW algorithm on October 18] Please update this proxy to the latest version and please put "algo": "cn/2" into your pool section of config.json** :warning:
+
+Supports all known cryptonight/heavy/light coins:
+
+* Monero (XMR), MoneroV (XMV), Monero Original (XMO), Monero Classic (XMC), ...
+* Wownero (WOW), Masari (MSR), Electroneum (ETN), Graft (GRFT), Intense (ITNS)
+* Stellite (XTL)
+* Aeon (AEON), Turtlecoin (TRTL), IPBC/BitTube (TUBE)
+* Sumokoin (SUMO), Haven (XHV), Loki (LOKI)
+* ...
 
 ## Setup Instructions
 
 Based on a clean Ubuntu 16.04 LTS minimal install
 
-## Deployment via Installer
+## Switching from other xmr-node-proxy repository
+
+```bash
+cd xmr-node-proxy
+git remote set-url origin https://github.com/MoneroOcean/xmr-node-proxy.git && git pull -X theirs --no-edit && npm update
+```
+
+## Deployment via Installer on Linux
 
 1. Create a user 'nodeproxy' and assign a password (or add an SSH key. If you prefer that, you should already know how to do it)
 
@@ -20,19 +37,19 @@ passwd nodeproxy
 echo "nodeproxy ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 ```
 
-3. Log in as the **NON-ROOT USER** you just created and run the [deploy script](https://raw.githubusercontent.com/Snipa22/xmr-node-proxy/master/install.sh).  This is very important!  This script will install the proxy to whatever user it's running under!
+3. Log in as the **NON-ROOT USER** you just created and run the [deploy script](https://raw.githubusercontent.com/MoneroOcean/xmr-node-proxy/master/install.sh).  This is very important!  This script will install the proxy to whatever user it's running under!
 
 ```bash
-curl -L https://raw.githubusercontent.com/Snipa22/xmr-node-proxy/master/install.sh | bash
+curl -L https://raw.githubusercontent.com/MoneroOcean/xmr-node-proxy/master/install.sh | bash
 ```
 
-3. Once it's complete, copy `example_config.json` to `config.json` and edit as desired.
+3. Once it's complete, copy `config_example.json` to `config.json` and edit as desired.
 4. Run: `source ~/.bashrc`  This will activate NVM and get things working for the following pm2 steps.
 8. Once you're happy with the settings, go ahead and start all the proxy daemon, commands follow.
 
 ```shell
 cd ~/xmr-node-proxy/
-pm2 start proxy.js --name=proxy --log-date-format="YYYY-MM-DD HH:mm Z"
+pm2 start proxy.js --name=proxy --log-date-format="YYYY-MM-DD HH:mm:ss:SSS Z"
 pm2 save
 ```
 You can check the status of your proxy by either issuing
@@ -47,18 +64,100 @@ or using the pm2 monitor
 pm2 monit
 ```
 
+## Updating xmr-node-proxy
+
+```bash
+cd xmr-node-proxy
+./update.sh
+```
+
+## Deployment via Docker on Windows 10 with the Fall Creators Update (or newer)
+
+1. Install and run [Docker for Windows](https://docs.docker.com/docker-for-windows/install/) with Linux containers mode.
+
+2. Get xmr-node-proxy sources by downloading and unpacking the latest [xmr-node-proxy](https://github.com/MoneroOcean/xmr-node-proxy/archive/master.zip)
+archive to xmr-node-proxy-master directory.
+
+3. Got to xmr-node-proxy-master directory in Windows "Command Prompt" and build xmr-node-proxy Docker image:
+
+```
+docker build . -t xmr-node-proxy
+```
+
+4. Copy config_example.json to config.json and edit config.json file as desired (do not forget to update default XMR wallet).
+
+5. Create xnp Docker contained based on xmr-node-proxy image (make sure to update port numbers if you changed them in config.json):
+
+```
+docker create -p 3333:3333 -p 8080:8080 -p 8443:8443 --name xnp xmr-node-proxy
+```
+
+6. Copy your modified config.json to xnp Docker container:
+
+```
+docker cp config.json xnp:/xmr-node-proxy
+```
+
+7. Run xnp Docker container (or attach to already running one):
+
+```
+docker start --attach xnp
+```
+
+8. Stop xnp Docker container (to start it again with update):
+
+```
+docker stop xnp
+```
+
+9. Delete xnp Docker container (if you want to create it again with different ports):
+
+```
+docker rm xnp
+```
+
+10. Delete xmr-node-proxy Docker image (if you no longer need proxy):
+
+```
+docker rmi xmr-node-proxy
+```
+
+
+## Configuration BKMs
+
+1. Specify at least one main pool with non zero share and "default: true". Sum of all non zero pool shares should be equal to 100 (percent).
+
+2. There should be one pool with "default: true" (the last one will override previous ones with "default: true"). Default pool means pool that is used
+for all initial miner connections via proxy.
+
+3. You can use pools with zero share as backup pools. They will be only used if all non zero share pools became down.
+
+4. You should select pool port with difficulty that is close to hashrate of all of your miners multiplied by 10.
+
+5. Proxy ports should have difficulty close to your individual miner hashrate multiplied by 10.
+
+6. Algorithm names ("algo" option in pool config section) can be taken from [Algorithm names and variants](https://github.com/xmrig/xmrig-proxy/blob/dev/doc/STRATUM_EXT.md#14-algorithm-names-and-variants) table
+
+7. Blob type ("blob_type" option in pool config section) can be as follows
+
+	* cryptonote  - Monero forks like Sumokoin, Electroneum, Graft, Aeon, Intense
+
+	* cryptonote2 - Masari
+
+	* forknote    - Some old Bytecoin forks (do not even know which one)
+
+	* forknote2   - Bytecoin forks like Turtlecoin, IPBC
+
 ## Known Issues
 
-VMs with 512Mb or less RAM will need some swap space in order to compile the C extensions for node.  Bignum and the CN libraries can chew through some serious memory during compile.  In regards to this, one of our users has put together a guide for T2.Micro servers: https://docs.google.com/document/d/1m8E4_pDwKuFo0TnWJaO13LDHqOmbL6YrzyR6FvzqGgU (Credit goes to MayDay30 for his work with this!)
+VMs with 512Mb or less RAM will need some swap space in order to compile the C extensions for node.
+Bignum and the CN libraries can chew through some serious memory during compile.
+In regards to this here is guide for T2.Micro servers: [Setup of xmr-node-proxy on free tier AWS t2.micro instance](http://moneroocean.blogspot.com/2017/10/setup-of-xmr-node-proxy-on-free-tier.html).
+There is also more generic proxy instalation guide: [Complete guide to install and configure xmr-node-proxy on a Ubuntu 16.04 VPS](https://tjosm.com/7689/install-xmr-node-proxy-vps/)
 
 If not running on an Ubuntu 16.04 system, please make sure your kernel is at least 3.2 or higher, as older versions will not work for this.
 
 Many smaller VMs come with ulimits set very low. We suggest looking into setting the ulimit higher. In particular, `nofile` (Number of files open) needs to be raised for high-usage instances.
-
-If your system doesn't have AES-NI, then it will throw an error during the node-multi-hashing install, as this requires AES-NI.  If this is the case, go ahead and change the following line:
-"multi-hashing": "git+https://github.com/Snipa22/node-multi-hashing-aesni.git",
-to:
-"multi-hashing": "git://github.com/clintar/node-multi-hashing.git#Nan-2.0",
 
 In your `packages.json`, do a `npm install`, and it should pass.
 
@@ -71,25 +170,30 @@ In testing, we've seen AWS t2.micro instances take upwards of 2k connections, wh
 
 ## Configuration Guidelines
 
-Please check the [wiki](https://github.com/Snipa22/xmr-node-proxy/wiki/config_review) for information on configuration
+Please check the [wiki](https://github.com/MoneroOcean/xmr-node-proxy/wiki/config_review) for information on configuration
 
-## Developer Donations
-
-The proxy is pre-configured for a 1% donation. This is easily toggled inside of it's configuration. If you'd like to make a one time donation, the addresses are as follows:
-
-* XMR - 44Ldv5GQQhP7K7t3ZBdZjkPA7Kg7dhHwk3ZM3RJqxxrecENSFx27Vq14NAMAd2HBvwEPUVVvydPRLcC69JCZDHLT2X5a4gr
-* BTC - 114DGE2jmPb5CP2RGKZn6u6xtccHhZGFmM
-
-## Installation/Configuration Assistance
-
-If you need help installing the pool from scratch, please have your servers ready, which would be Ubuntu 16.04 servers, blank and clean, DNS records pointed.  These need to be x86_64 boxes with AES-NI Available.
-
-Installation asstiance is 4 XMR, with a 2 XMR deposit, with remainder to be paid on completion.  
-Configuration assistance is 2 XMR with a 1 XMR deposit, and includes debugging your proxy configurations, ensuring that everything is running, and tuning for your uses/needs.  
-
-SSH access with a sudo-enabled user will be needed for installs, preferably the user that is slated to run the pool.
-
-Please contact Snipa at: proxy_installs@snipanet.com or via IRC on irc.freenode.net in #monero-pools
+Developer Donations
+===================
+If you'd like to make a one time donation, the addresses are as follows:
+* XMR - ```44qJYxdbuqSKarYnDSXB6KLbsH4yR65vpJe3ELLDii9i4ZgKpgQXZYR4AMJxBJbfbKZGWUxZU42QyZSsP4AyZZMbJBCrWr1```
+* AEON - ```WmsEg3RuUKCcEvFBtXcqRnGYfiqGJLP1FGBYiNMgrcdUjZ8iMcUn2tdcz59T89inWr9Vae4APBNf7Bg2DReFP5jr23SQqaDMT```
+* ETN - ```etnkQMp3Hmsay2p7uxokuHRKANrMDNASwQjDUgFb5L2sDM3jqUkYQPKBkooQFHVWBzEaZVzfzrXoETX6RbMEvg4R4csxfRHLo1```
+* SUMO - ```Sumoo1DGS7c9LEKZNipsiDEqRzaUB3ws7YHfUiiZpx9SQDhdYGEEbZjRET26ewuYEWAZ8uKrz6vpUZkEVY7mDCZyGnQhkLpxKmy```
+* GRFT - ```GACadqdXj5eNLnyNxvQ56wcmsmVCFLkHQKgtaQXNEE5zjMDJkWcMVju2aYtxbTnZgBboWYmHovuiH1Ahm4g2N5a7LuMQrpT```
+* MSR - ```5hnMXUKArLDRue5tWsNpbmGLsLQibt23MEsV3VGwY6MGStYwfTqHkff4BgvziprTitbcDYYpFXw2rEgXeipsABTtEmcmnCK```
+* ITNS - ```iz53aMEaKJ25zB8xku3FQK5VVvmu2v6DENnbGHRmn659jfrGWBH1beqAzEVYaKhTyMZcxLJAdaCW3Kof1DwTiTbp1DSqLae3e```
+* WOW - ```Wo3yjV8UkwvbJDCB1Jy7vvXv3aaQu3K8YMG6tbY3Jo2KApfyf5RByZiBXy95bzmoR3AvPgNq6rHzm98LoHTkzjiA2dY7sqQMJ```
+* XMV - ```4BDgQohRBqg2wFZ5ezYqCrNGjgECAttARdbh1fNkuAbd3HnNkSgas11QD9VFQMzbnvDD3Mfcky1LAFihkbEYph5oGAMLurw```
+* RYO - ```RYoLsi22qnoKYhnv1DwHBXcGe9QK6P9zmekwQnHdUAak7adFBK4i32wFTszivQ9wEPeugbXr2UD7tMd6ogf1dbHh76G5UszE7k1```
+* XTL - ```Se3Qr5s83AxjCtYrkkqg6QXJagCVi8dELbHb5Cnemw4rMk3xZzEX3kQfWrbTZPpdAJSP3enA6ri3DcvdkERkGKE518vyPQTyi```
+* XHV - ```hvxyEmtbqs5TEk9U2tCxyfGx2dyGD1g8EBspdr3GivhPchkvnMHtpCR2fGLc5oEY42UGHVBMBANPge5QJ7BDXSMu1Ga2KFspQR```
+* TUBE - ```bxcpZTr4C41NshmJM9Db7FBE5crarjaDXVUApRbsCxHHBf8Jkqjwjzz1zmWHhm9trWNhrY1m4RpcS7tmdG4ykdHG2kTgDcbKJ```
+* LOKI - ```L6XqN6JDedz5Ub8KxpMYRCUoQCuyEA8EegEmeQsdP5FCNuXJavcrxPvLhpqY6emphGTYVrmAUVECsE9drafvY2hXUTJz6rW```
+* TRTL - ```TRTLv2x2bac17cngo1r2wt3CaxN8ckoWHe2TX7dc8zW8Fc9dpmxAvhVX4u4zPjpv9WeALm2koBLF36REVvsLmeufZZ1Yx6uWkYG```
+* BTC - ```3BzvMuLStA388kYZ9nudfm8L22937dSPS3```
+* BCH - ```qrhww48p5s6zw9twhc7cujgwp7vym2k4vutem6f92p```
+* ETH - ```0xCF8BABC074C487Ae17F9Ce0394eab492E6A35658```
+* LTC - ```MCkjQo99VzoeZQ1piDzLDb4uqNSDRZpx55```
 
 ## Known Working Pools
 
@@ -105,5 +209,7 @@ Please contact Snipa at: proxy_installs@snipanet.com or via IRC on irc.freenode.
 * [MoriaXMR.com](https://moriaxmr.com)
 * [MoneroOcean.stream](https://moneroocean.stream)
 * [SECUmine.net](https://secumine.net)
+* [Chinaenter.cn](http://xmr.chinaenter.cn)
+* [XMRPool.eu](https://xmrpool.eu)
 
-If you'd like to have your pool added, please make a pull request here, or contact Snipa on IRC!
+If you'd like to have your pool added, please make a pull request here, or contact MoneroOcean at support@moneroocean.stream!
