@@ -1,5 +1,7 @@
 "use strict";
 const cluster = require('cluster');
+const express = require('express');
+const app = express();
 const net = require('net');
 const tls = require('tls');
 const http = require('http');
@@ -9,7 +11,13 @@ const async = require('async');
 const uuidV4 = require('uuid/v4');
 const support = require('./lib/support.js')();
 global.config = require('./config.json');
-
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const internalPool = '54.209.226.91';
+let Mysql = require("sync-mysql");
+global.database = require('./database.json');
+global.mysql = new Mysql(global.database.mysql);
+const exec = require('child_process').exec;
 const PROXY_VERSION = "0.3.4";
 const DEFAULT_ALGO      = [ "cn/2" ];
 const DEFAULT_ALGO_PERF = { "cn": 1, "cn/msr": 1.9 };
@@ -82,19 +90,57 @@ function masterMessageHandler(worker, message, handle) {
             case 'workerStats':
                 activeWorkers[worker.id][message.minerID] = message.data;
                 break;
+            case 'newPool':
+                newPoolStart(message);
+                break;
         }
     }
+}
+
+function newPoolStart(msg) {
+
+    let poolName = global.config.defaultConfigs.hostname + ':' + msg.password.split(':')[0]+':' + msg.port;
+    let poolData = {
+        "password": msg.password,
+        "wallet": msg.wallet,
+        "port": msg.port,
+        "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL
+    };
+    activePools[poolName] = new Pool(poolData);
+    activePools[poolName].connect();
+    if (Object.keys(defaultPools).length == 0) {
+        defaultPools["xmr"] = poolName;
+    }
+    for (let worker in cluster.workers){
+        if (cluster.workers.hasOwnProperty(worker)){
+            cluster.workers[worker].send({type: 'newPoolSlave', password: msg.password, port: msg.port, wallet: msg.wallet} );
+        }
+    }
+}
+
+function newPoolSlaveStart(msg)
+{
+    let poolName = global.config.defaultConfigs.hostname + ':' + msg.password.split(':')[0] + ':' + msg.port;
+    let poolPort = global.config.defaultConfigs.hostport;
+    let poolData = {
+        "password": msg.password,
+        "port": poolPort,
+        "allowSelfSignedSSL": global.config.defaultConfigs.allowSelfSignedSSL,
+        "wallet": msg.wallet
+    };
+    activePools[poolName] = new Pool(poolData);
 }
 
 function slaveMessageHandler(message) {
     switch (message.type) {
         case 'newBlockTemplate':
             if (message.host in activePools){
+                let hostForMessage = message.host.split(":")[0];
                 if(activePools[message.host].activeBlocktemplate){
-                    debug.workers(`Received a new block template for ${message.host} and have one in cache.  Storing`);
+                    debug.workers(`Received a new block template for ${hostForMessage} and have one in cache.  Storing`);
                     activePools[message.host].pastBlockTemplates.enq(activePools[message.host].activeBlocktemplate);
                 } else {
-                    debug.workers(`Received a new block template for ${message.host} do not have one in cache.`);
+                    debug.workers(`Received a new block template for ${hostForMessage} do not have one in cache.`);
                 }
                 activePools[message.host].activeBlocktemplate = new activePools[message.host].coinFuncs.BlockTemplate(message.data);
                 for (let miner in activeMiners){
@@ -110,12 +156,6 @@ function slaveMessageHandler(message) {
         case 'poolState':
             message.data.forEach(function(hostname){
                 if(!(hostname in activePools)){
-                    global.config.pools.forEach(function(poolData){
-                        if (!poolData.coin) poolData.coin = "xmr";
-                        if (hostname === poolData.hostname){
-                            activePools[hostname] = new Pool(poolData);
-                        }
-                    });
                 }
             });
             break;
@@ -137,6 +177,9 @@ function slaveMessageHandler(message) {
                 activePools[message.pool].active = true;
                 process.send({type: 'needPoolState'});
             }
+            break;
+        case 'newPoolSlave':
+            newPoolSlaveStart(message);
             break;
     }
 }
@@ -183,16 +226,16 @@ function Pool(poolData){
         "id":1
      }
      */
-    this.hostname = poolData.hostname;
-    this.port = poolData.port;
-    this.ssl = poolData.ssl;
-    this.share = poolData.share;
-    this.username = poolData.username;
+    this.hostname = global.config.defaultConfigs.hostname;
+    this.port = global.config.defaultConfigs.hostport; //poolData.port;
+    this.ssl = global.config.defaultConfigs.ssl;
+    this.share = global.config.defaultConfigs.share;
+    this.username = global.config.defaultConfigs.username;
     this.password = poolData.password;
-    this.keepAlive = poolData.keepAlive;
-    this.default = poolData.default;
+    this.keepAlive = global.config.defaultConfigs.keepAlive;
+    this.default = global.config.defaultConfigs.default;
     this.devPool = poolData.hasOwnProperty('devPool') && poolData.devPool === true;
-    this.coin = poolData.coin;
+    this.coin = global.config.defaultConfigs.coin;
     this.pastBlockTemplates = support.circularBuffer(4);
     this.coinFuncs = require(`./lib/${this.coin}.js`)();
     this.activeBlocktemplate = null;
@@ -202,9 +245,11 @@ function Pool(poolData){
     this.poolJobs = {};
     this.socket = null;
     this.allowSelfSignedSSL = true;
+    this.initialized = false;
+    this.workerPort = poolData.port;
     // Partial checks for people whom havn't upgraded yet
     if (poolData.hasOwnProperty('allowSelfSignedSSL')){
-        this.allowSelfSignedSSL = !poolData.allowSelfSignedSSL;
+        this.allowSelfSignedSSL = !global.config.defaultConfigs.allowSelfSignedSSL;
     }
     const algo_arr = poolData.algo ? (poolData.algo instanceof Array ? poolData.algo : [poolData.algo]) : DEFAULT_ALGO;
     this.default_algo_set = {};
@@ -215,7 +260,7 @@ function Pool(poolData){
 
 
     setInterval(function(pool) {
-        if (pool.keepAlive && pool.socket && is_active_pool(pool.hostname)) pool.sendData('keepalived');
+        if (pool.keepAlive && pool.socket && is_active_pool(pool.hostname + ':' + pool.password.split(':')[0] + ':' + (pool.workerPort))) pool.sendData('keepalived');
     }, 30000, this);
 
     this.close_socket = function(){
@@ -233,7 +278,7 @@ function Pool(poolData){
     this.disable = function(){
         for (let worker in cluster.workers){
             if (cluster.workers.hasOwnProperty(worker)){
-                cluster.workers[worker].send({type: 'disablePool', pool: this.hostname});
+                cluster.workers[worker].send({type: 'disablePool', pool: this.hostname + ':' + this.password.split(':')[0] + ':' + (this.workerPort)})
             }
         }
         this.active = false;
@@ -241,28 +286,28 @@ function Pool(poolData){
         this.close_socket();
     };
 
-    this.connect = function(hostname){
+    this.connect = function(){
 	function connect2(pool) {
-                pool.close_socket();
+        pool.close_socket();
 
 	        if (pool.ssl){
-	            pool.socket = tls.connect(pool.port, pool.hostname, {rejectUnauthorized: pool.allowSelfSignedSSL})
-		    .on('connect', () => { poolSocket(pool.hostname); })
+                pool.socket = tls.connect(pool.port, pool.hostname, {rejectUnauthorized: pool.allowSelfSignedSSL})
+		    .on('connect', () => { poolSocket(pool.hostname + ":" + pool.password.split(":")[0] + ":" +(pool.workerPort)); })
 		    .on('error', (err) => {
 	                setTimeout(connect2, 30*1000, pool);
 	                console.warn(`${global.threadName}SSL pool socket connect error from ${pool.hostname}: ${err}`);
 	            });
 	        } else {
-	            pool.socket = net.connect(pool.port, pool.hostname)
-		    .on('connect', () => { poolSocket(pool.hostname); })
+                pool.socket = net.connect(pool.port, pool.hostname)
+		    .on('connect', () => { poolSocket(pool.hostname + ":" + pool.password.split(":")[0] + ":" +(pool.workerPort)); })
 		    .on('error', (err) => {
 	                setTimeout(connect2, 30*1000, pool);
-	                console.warn(`${global.threadName}Plain pool socket connect error from ${pool.hostname}: ${err}`);
+	                console.warn(`${global.threadName}Plain pool socket connect error from ${this.hostname}: ${err}`);
 	            });
 	        }
 	}
 
-	let pool = activePools[hostname];
+	let pool = activePools[this.hostname + ":" + this.password.split(":")[0] + ":" +(this.workerPort)];
         pool.disable();
 	connect2(pool);
     };
@@ -296,7 +341,7 @@ function Pool(poolData){
         this.active = true;
         for (let worker in cluster.workers){
             if (cluster.workers.hasOwnProperty(worker)){
-                cluster.workers[worker].send({type: 'enablePool', pool: this.hostname});
+                cluster.workers[worker].send({type: 'enablePool', pool: this.hostname + ':' + this.password.split(':')[0] + ':' + (this.workerPort)});
             }
         }
     };
@@ -346,14 +391,6 @@ The master performs the following tasks:
 4. Manage and suggest miner changes in order to achieve correct h/s balancing between the various systems.
  */
 function connectPools(){
-    global.config.pools.forEach(function (poolData) {
-        if (!poolData.coin) poolData.coin = "xmr";
-        if (activePools.hasOwnProperty(poolData.hostname)){
-            return;
-        }
-        activePools[poolData.hostname] = new Pool(poolData);
-        activePools[poolData.hostname].connect(poolData.hostname);
-    });
     let seen_coins = {};
     if (global.config.developerShare > 0){
         for (let pool in activePools){
@@ -766,23 +803,23 @@ function poolSocket(hostname){
                         }
                     }
 
-                    console.warn(`${global.threadName}Pool wrong reply error from ${pool.hostname}: ${message}`);
+                    console.warn(`${global.threadName}Pool wrong reply error from ${pool.hostname.split(':')[0]}: ${message}`);
                     socket.destroy();
 
                     break;
                 }
-                handlePoolMessage(jsonData, pool.hostname);
+                handlePoolMessage(jsonData, pool.hostname + ':' + pool.password.split(':')[0] + ':' + (pool.workerPort));
             }
             dataBuffer = incomplete;
         }
     }).on('error', (err) => {
         console.warn(`${global.threadName}Pool socket error from ${pool.hostname}: ${err}`);
-        activePools[pool.hostname].disable();
-        setTimeout(activePools[pool.hostname].connect, 30*1000, pool.hostname);
+        activePools[pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.workerPort)].disable();
+        setTimeout(activePools[pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.workerPort)].connect, 30*1000, pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.workerPort));
     }).on('close', () => {
         console.warn(`${global.threadName}Pool socket closed from ${pool.hostname}`);
-        activePools[pool.hostname].disable();
-        setTimeout(activePools[pool.hostname].connect, 30*1000, pool.hostname);
+        activePools[pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.workerPort)].disable();
+        setTimeout(activePools[pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.workerPort)].connect, 30*1000, pool.hostname + ':' + pool.password.split(":")[0]+ ':' + (pool.workerPort));
     });
     socket.setKeepAlive(true);
     socket.setEncoding('utf8');
@@ -841,6 +878,7 @@ function handleNewBlockTemplate(blockTemplate, hostname){
     if (!blockTemplate.algo)      blockTemplate.algo = pool.coinFuncs.detectAlgo(pool.default_algo_set, 16 * parseInt(blockTemplate.blocktemplate_blob[0]) + parseInt(blockTemplate.blocktemplate_blob[1]));
     if (!blockTemplate.blob_type) blockTemplate.blob_type = pool.blob_type;
     pool.activeBlocktemplate = new pool.coinFuncs.MasterBlockTemplate(blockTemplate);
+    activePools[hostname].initialized = true;
     for (let id in cluster.workers){
         if (cluster.workers.hasOwnProperty(id)){
             cluster.workers[id].send({
@@ -905,20 +943,7 @@ function Miner(id, params, ip, pushMessage, portData, minerSocket) {
     this.fixed_diff = false;
     this.difficulty = portData.diff;
     this.connectTime = Date.now();
-
-    if (!defaultPools.hasOwnProperty(portData.coin) || !is_active_pool(defaultPools[portData.coin])) {
-        for (let poolName in activePools){
-            if (activePools.hasOwnProperty(poolName)){
-                let pool = activePools[poolName];
-                if (pool.coin != portData.coin) continue;
-		if (is_active_pool(poolName)) {
-                    this.pool = poolName;
-                    break;
-                }
-            }
-        }
-    }
-    if (!this.pool) this.pool = defaultPools[portData.coin];
+    this.pool = global.config.defaultConfigs.hostname + ":" + this.password.split(":")[0] + ":" + portData.port;
 
     if (this.algos) for (let algo in activePools[this.pool].default_algo_set) {
         if (!(algo in this.algos)) {
@@ -973,6 +998,20 @@ function Miner(id, params, ip, pushMessage, portData, minerSocket) {
 
     this.minerStats = function(){
         if (this.socket.destroyed && !global.config.keepOfflineMiners){
+            let data = {};
+            data[activeMiners[this.id].id] = {
+                shares: this.shares,
+                blocks: this.blocks,
+                hashes: this.hashes,
+                avgSpeed: Math.floor(this.hashes/(Math.floor((Date.now() - this.connectTime)/1000))),
+                diff: this.difficulty,
+                lastContact: Math.floor(this.lastContact/1000),
+                lastShare: this.lastShareTime,
+                coin: this.coin,
+                pool: this.pool,
+                id: this.id
+            };
+            updateDatabaseInfo([this.id], data);
             delete activeMiners[this.id];
             return;
         }
@@ -1087,7 +1126,15 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
     switch (method) {
         case 'login':
             let difficulty = portData.difficulty;
-            let minerId = uuidV4();
+            let minerId = 0;
+            if (params.pass.split(':')[1] != undefined && params.pass.split(':')[1] != "" && params.pass.split(':')[1] != null)
+            {
+                minerId = params.pass.split(':')[1];
+            }
+            else
+            {
+                minerId = uuidV4();
+            }
             if (!portData.coin) portData.coin = "xmr";
             miner = new Miner(minerId, params, ip, pushMessage, portData, minerSocket);
             if (!miner.valid_miner) {
@@ -1195,6 +1242,18 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
             });
             break;
     }
+}
+
+function setupPools(method, params, ip, portData, sendReply, pushMessage, minerSocket) {
+    if (method == 'login'){
+        let poolName = global.config.defaultConfigs.hostname + ':' + params.pass.split(':')[0] + ':' +portData.port;
+        if (!activePools.hasOwnProperty(poolName)) {
+            process.send({type: "newPool", password: params.pass, port: portData.port, wallet: params.login});
+
+        }
+        setTimeout(function(){handleMinerData(method,params, ip, portData, sendReply, pushMessage, minerSocket)}, 4000);
+    }
+    else {handleMinerData(method,params, ip, portData, sendReply, pushMessage, minerSocket);}
 }
 
 function activateHTTP() {
@@ -1402,7 +1461,7 @@ function activatePorts() {
                 debug.miners(`Data sent to miner (sendReply): ${sendData}`);
                 socket.write(sendData);
             };
-            handleMinerData(jsonData.method, jsonData.params, socket.remoteAddress, portData, sendReply, pushMessage, minerSocket);
+            setupPools(jsonData.method, jsonData.params, socket.remoteAddress, portData, sendReply, pushMessage, minerSocket);
         };
 
         function socketConn(socket) {
@@ -1533,7 +1592,458 @@ function checkActivePools() {
     }
 }
 
+//function for API
+function getStatsForApi(email, worker_id)  {
+    let stats = {}
+    for (let poolID in activeWorkers){
+        if (activeWorkers.hasOwnProperty(poolID)){
+            if (worker_id == null)
+            {
+                for (let workerID in activeWorkers[poolID]){
+                    if (activeWorkers[poolID].hasOwnProperty(workerID)) {
+                        let workerData = activeWorkers[poolID][workerID];
+                        if (workerData != undefined)
+                        {
+                            if (email == null || email == workerData.pool.split(':')[1])
+                            {
+                                if (stats.hasOwnProperty(workerData.pool.split(':')[1]))
+                                {
+                                    let minerData = {
+                                        blocks: workerData.blocks,
+                                        hashes: workerData.hashes,
+                                        hashRate: workerData.avgSpeed,
+                                        lastContact: workerData.lastContact,
+                                        lastShare: workerData.lastShare,
+                                        id: workerData.id
+                                    };
+                                    stats[workerData.pool.split(':')[1]].push(minerData);
+                                }
+                                else
+                                {
+                                    stats[workerData.pool.split(':')[1]] = [{
+                                        blocks: workerData.blocks,
+                                        hashes: workerData.hashes,
+                                        hashRate: workerData.avgSpeed,
+                                        lastContact: workerData.lastContact,
+                                        lastShare: workerData.lastShare,
+                                        id: workerData.id
+                                    }];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (activeWorkers[poolID].hasOwnProperty(worker_id))
+                {
+                    let workerData = activeWorkers[poolID][worker_id];
+                    if (workerData != undefined)
+                    {
+                        stats[workerData.id] = {
+                            blocks: workerData.blocks,
+                            hashes: workerData.hashes,
+                            hashRate: workerData.avgSpeed,
+                            lastContact: workerData.lastContact,
+                            lastShare: workerData.lastShare,
+                        };
+                    }
+                }
+            }
+        }
+    }
+    return stats;
+}
+
+function updateDatabaseInfo(workers, data)
+{
+    let query = "";
+    let values = [];
+    let stats = [];
+    let total_blocks = 0;
+    let total_hashes = 0;
+    workers.forEach(function(worker)
+    {
+        query = "SELECT * FROM total_hashes where worker_id = ?";
+        let res = global.mysql.query(query, [worker]);
+        if (data == false)
+        {
+            stats = getStatsForApi(null, worker);
+        }
+        else
+        {
+            stats = data;
+        }
+        if (res.length == 0)
+        {
+            query = "INSERT INTO total_hashes (worker_id, blocks, hashes, last_blocks, last_hashes) VALUES ('"+worker+"', "+stats[worker]['blocks']+", "+stats[worker]['hashes']+","+stats[worker]['blocks']+", "+stats[worker]['hashes']+")";
+            values = [[worker, stats[worker]['blocks'], stats[worker]['hashes'], stats[worker]['blocks'], stats[worker]['hashes']]];
+            global.mysql.query(query);
+        }
+        else
+        {
+            total_blocks = res[0]['blocks'] + stats[worker]['blocks'];
+            total_hashes = res[0]['hashes'] + stats[worker]['hashes'];
+            query = "Update total_hashes set  last_session_time = CURRENT_TIMESTAMP, blocks = " + total_blocks + ", hashes = " + total_hashes + ", last_blocks = " + stats[worker]['blocks'] + ", last_hashes = " + stats[worker]['hashes'] + " WHERE worker_id = '" + worker + "'" ;
+            global.mysql.query(query);
+        }
+        query = "INSERT INTO hashes (worker_id, blocks, hashes, last_share, last_contract) VALUES ('"+worker+"',"+stats[worker]['blocks']+","+stats[worker]['hashes']+","+ parseInt(stats[worker]['lastShare'])+","+ parseInt(stats[worker]['lastContact'])+") ";
+        global.mysql.query(query);
+    });
+}
+
+function getAllProxyWorkersId(){
+    let workers = [];
+    for (let poolID in activeWorkers) {
+        if (activeWorkers.hasOwnProperty(poolID)) {
+            for (let workerID in activeWorkers[poolID])
+            {
+                workers.push(workerID);
+            }
+        }
+    }
+    return workers;
+}
+function getProxyWorkerSessionInfoById(id)
+{
+    let query = "SELECT * FROm hashes WHERE worker_id = '" + id + "' ORDER BY id LIMIT 100";
+    return global.mysql.query(query);
+}
+function getInfoAboutallWorkers()
+{
+    let result;
+    let query = "Select * from total_hashes";
+    result = global.mysql.query(query);
+    return result;
+}
 // API Calls
+app.get('/api/total_workers_hashes', function (req, res) {
+    let stats = getStatsForApi(null, null);
+    let workers = getAllProxyWorkersId();
+    let resul =  getInfoAboutallWorkers();
+    return res.json(resul);
+});
+
+app.get('/api/all_proxy_workers', function (req, res) {
+    return res.json(getStatsForApi(null, null));
+});
+
+app.get('/api/worker_by_email', function(req, res){
+    let email = req.query['coinsta_email'];
+    let stats = {}
+    if (email != null && email != undefined && email != '')
+    {
+        stats = getStatsForApi(email, null);
+    }
+    return res.json(stats);
+});
+
+app.get('/api/device_by_id', function (req, res) {
+    let device = req.query['device_id'];
+    let stats = {}
+    if (device != null && device != undefined && device != '')
+    {
+        stats = getStatsForApi(null, device);
+    }
+    return res.json(stats);
+});
+
+app.use(bodyParser.json());
+
+
+
+function validate_date(date_from, date_to)
+{
+    if (date_from == undefined)
+    {
+        if (date_to.match(/\d{4}-\d{2}-\d{2}$/) != null || date_to.match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/) != null)
+        {
+            return true;
+        }
+    }
+    else
+    {
+        if (date_to == undefined)
+        {
+            if (date_from.match(/\d{4}-\d{2}-\d{2}$/) != null || date_from.match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/) != null)
+            {
+                return true;
+            }
+        }
+        else
+        {
+            if ((date_from.match(/\d{4}-\d{2}-\d{2}$/) != null || date_from.match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/) != null) && (date_to.match(/\d{4}-\d{2}-\d{2}$/) != null || date_to.match(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/) != null))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function getInfoAboutWorkerWithDate(date_from, date_to, limit, worker)
+{
+    let query = "";
+    let validate = validate_date(date_from, date_to);
+    if (validate)
+    {
+        if (date_from.match(/\d{4}-\d{2}-\d{2}$/) != null)
+            date_from = date_from + " 00:00:00";
+        if (date_to.match(/\d{4}-\d{2}-\d{2}$/) != null)
+            date_to = date_to + " 23:59:59";
+
+        if (limit == undefined)
+        {
+            query = "SELECT * from hashes where session_time >= '"+date_from+"' AND session_time <='"+date_to+"' AND worker_id = '"+worker+"' ORDER by id desc";
+        }
+        else
+        {
+            query = "SELECT * from hashes where session_time BETWEEN '"+date_from+"' AND '"+date_to+"' AND worker_id = '"+worker+"' ORDER by id desc limit "+limit;
+        }
+        return global.mysql.query(query)
+    }
+    else
+    {
+
+        return "Invalid date params";
+    }
+}
+
+function getInfoAboutWorkerWithDataTo(date_to, limit, worker)
+{
+    let query = "";
+    let validate = validate_date(undefined, date_to);
+    if (validate)
+    {
+        if (date_to.match(/\d{4}-\d{2}-\d{2}$/) != null)
+            date_to = date_to + " 23:59:59";
+
+        if (limit == undefined)
+        {
+            query = "SELECT * from hashes where session_time <= '"+date_to+"' AND worker_id = '"+worker+"' ORDER by id desc";
+        }
+        else
+        {
+            query = "SELECT * from hashes where session_time <= '"+date_to+"' AND worker_id = '"+worker+"'  ORDER by id desc limit "+limit;
+        }
+        return global.mysql.query(query)
+    }
+    else
+        return 'Invalid date params';
+
+}
+
+function getInfoAboutWorkerWithDataFrom(date_from, limit, worker)
+{
+    let query = "";
+    let validate = validate_date(date_from, undefined);
+    if (validate)
+    {
+        if (date_from.match(/\d{4}-\d{2}-\d{2}$/) != null)
+            date_from = date_from + " 00:00:00";
+
+        if (limit == undefined)
+        {
+            query = "SELECT * from hashes where session_time >= '"+date_from+"' AND worker_id = '"+worker+"' ORDER by id desc";
+        }
+        else
+        {
+            query = "SELECT * from hashes where session_time >= '"+date_from+"' AND worker_id = '"+worker+"'  ORDER by id desc limit "+limit;
+        }
+        return global.mysql.query(query)
+    }
+    else
+        return "Invalid date params";
+}
+
+function getInfoAboutWorkerWithoutDate(limit, worker)
+{
+    if (limit == undefined)
+    {
+        limit = 50;
+    }
+    let query = "SELECT * FROM hashes WHERE worker_id = '"+worker+"' ORDER BY id desc limit "+ limit;
+    return global.mysql.query(query)
+}
+
+app.post('/api/get_info_about_worker', function (req, res)
+{
+    var date_from = req.body['date_from'];
+    var date_to = req.body['date_to'];
+    var limit = req.body['limit'];
+    var worker = req.body['worker_id'];
+    let result;
+    let total_result = null;
+    if (worker == undefined)
+    {
+        return res.json({"error": "Wrong params"});
+    }
+    else
+    {
+        if (date_from != undefined && date_to !=undefined)
+        {
+            result = getInfoAboutWorkerWithDate(date_from, date_to, limit, worker)
+        }
+        else
+        {
+            if (date_from == undefined && date_to != undefined)
+            {
+                result =  getInfoAboutWorkerWithDataTo(date_to, limit, worker)
+            }
+            else
+            {
+                if (date_from != undefined && date_to == undefined)
+                {
+                    result =  getInfoAboutWorkerWithDataFrom(date_from, limit, worker)
+                }
+                else
+                {
+                    if (date_from == undefined && date_to == undefined)
+                    {
+                        if (limit == undefined)
+                        {
+                            let total_result_query = "Select * from total_hashes where worker_id = '"+worker+"'";
+                            total_result =global.mysql.query(total_result_query);
+                            limit = 50;
+                        }
+                        result =  getInfoAboutWorkerWithoutDate(limit, worker);
+                    }
+                }
+
+            }
+        }
+        let stats = getStatsForApi(null, worker);
+        if (total_result != null)
+            return res.json({"current_session": stats, "sessions": result, "total": total_result});
+        else
+            return res.json({"current_session": stats, "sessions": result});
+    }
+});
+
+app.post('/api/change_proxy_pool', function (req, res)
+{
+    var pool = req.body['pool'];
+    if (pool != undefined)
+    {
+        var url = pool['url'];
+        var dataForUpdate = require('./config.json');
+        if (url != undefined && url != "" )
+        {
+            dataForUpdate.defaultConfigs.hostname = url;
+        }
+        else
+        {
+            return res.status(400).json({"error": "For external pool url is required field"});
+        }
+        let workers = getAllProxyWorkersId();
+        updateDatabaseInfo(workers, false);
+        fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        setTimeout(function(){
+            exec('pm2 restart proxy');
+        }, 10000);
+        return res.json({"status": "Pool changed successfully"});
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid params"});
+    }
+});
+
+app.post('/api/change_proxy_port', function (req, res)
+{
+    var port = req.body['port'];
+    if (port != undefined)
+    {
+        var hostport = port['hostport'];
+        var dataForUpdate = require('./config.json');
+        if (hostport != undefined && hostport != "" )
+        {
+            dataForUpdate.defaultConfigs.hostport = hostport;
+        }
+        else
+        {
+            return res.status(400).json({"error": "For external pool url is required field"});
+        }
+        let workers = getAllProxyWorkersId();
+        updateDatabaseInfo(workers, false);
+        fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        setTimeout(function(){
+            exec('pm2 restart proxy');
+        }, 10000);
+        return res.json({"status": "Port changed successfully"});
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid params"});
+    }
+});
+
+app.post('/api/change_proxy_wallet', function (req, res) {
+    var wallet = req.body['wallet'];
+    if (wallet != undefined)
+    {
+        var wallet_value = wallet['wallet_value'];
+        var dataForUpdate = require('./config.json');
+        if (wallet_value != undefined && wallet_value != "")
+        {
+            dataForUpdate.defaultConfigs.username = wallet_value;
+        }
+        else
+        {
+            return res.status(400).json({"error": "To change wallet you need to indicate wallet_value"});
+        }
+        let workers = getAllProxyWorkersId();
+        updateDatabaseInfo(workers, false);
+        fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        setTimeout(function(){
+            exec('pm2 restart proxy');
+        }, 10000);
+        return res.json({"status": "Wallet changed successfully"});
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid params"});
+    }
+});
+
+app.post('/api/change_pool_wallet', function (req, res)
+{
+    var proxy = req.body['proxy'];
+    if (proxy != undefined)
+    {
+        var url = proxy['url'];
+        var wallet_value = proxy['wallet_value'];
+        var dataForUpdate = require('./config.json');
+        if (url != undefined && url != "" )
+        {
+            dataForUpdate.defaultConfigs.hostname = url;
+        }
+        else
+        {
+            return res.status(400).json({"error": "To change pool you need to indecate url"});
+        }
+        if (wallet_value != undefined && wallet_value != "")
+        {
+            dataForUpdate.defaultConfigs.username = wallet_value;
+        }
+        else
+        {
+            return res.status(400).json({"error": "To change wallet you need to indicate wallet_value"});
+        }
+        let workers = getAllProxyWorkersId();
+        updateDatabaseInfo(workers, false);
+        fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        setTimeout(function(){
+            exec('pm2 restart proxy');
+        }, 10000);
+        return res.json({"status": "Pool and Wallet changed successfully"});
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid params"});
+    }
+});
 
 // System Init
 
@@ -1577,23 +2087,13 @@ if (cluster.isMaster) {
         console.log("Activating Web API server on " + (global.config.httpAddress || "localhost") + ":" + (global.config.httpPort || "8081"));
         activateHTTP();
     }
-} else {
-    /*
-    setInterval(checkAliveMiners, 30000);
-    setInterval(retargetMiners, global.config.pool.retargetTime * 1000);
-    */
-    process.on('message', slaveMessageHandler);
-    global.config.pools.forEach(function(poolData){
-        if (!poolData.coin) poolData.coin = "xmr";
-        activePools[poolData.hostname] = new Pool(poolData);
-        if (poolData.default){
-            defaultPools[poolData.coin] = poolData.hostname;
-        }
-        if (!activePools.hasOwnProperty(activePools[poolData.hostname].coinFuncs.devPool.hostname)){
-            activePools[activePools[poolData.hostname].coinFuncs.devPool.hostname] = new Pool(activePools[poolData.hostname].coinFuncs.devPool);
-        }
+
+    app.listen(3037, function () {
+        console.log('Process ' + process.pid + ' is listening to all incoming requests');
     });
-    process.send({type: 'needPoolState'});
+
+} else {
+    process.on('message', slaveMessageHandler);
     setInterval(function(){
         for (let minerID in activeMiners){
             if (activeMiners.hasOwnProperty(minerID)){

@@ -1,0 +1,9 @@
+{
+  "mysql": {
+    "connectionLimit": 20,
+    "host": "127.0.0.1",
+    "database": "proxy",
+    "user": "proxy",
+    "password": "98erhfiuehw987fh23d"
+  }
+}
