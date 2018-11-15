@@ -13,7 +13,6 @@ const support = require('./lib/support.js')();
 global.config = require('./config.json');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const internalPool = '54.209.226.91';
 let Mysql = require("sync-mysql");
 global.database = require('./database.json');
 global.mysql = new Mysql(global.database.mysql);
@@ -985,6 +984,8 @@ function Miner(id, params, ip, pushMessage, portData, minerSocket) {
     this.shares = 0;
     this.blocks = 0;
     this.hashes = 0;
+    this.not_awarded = getNotAwardedCount(this.id);
+    this.awarded = 0;
 
     this.validJobs = support.circularBuffer(5);
 
@@ -1009,7 +1010,8 @@ function Miner(id, params, ip, pushMessage, portData, minerSocket) {
                 lastShare: this.lastShareTime,
                 coin: this.coin,
                 pool: this.pool,
-                id: this.id
+                id: this.id,
+                not_awarded: this.not_awarded
             };
             updateDatabaseInfo([this.id], data);
             delete activeMiners[this.id];
@@ -1106,6 +1108,21 @@ function isAllowedLogin(username, password) {
             return false;
         }
     }
+}
+
+function getNotAwardedCount(device_id)
+{
+    let query = "SELECT not_awarded from total_hashes Where worker_id = '" + device_id + "';";
+    let res = global.mysql.query(query);
+    if (res.length > 0)
+    {
+        return res[0]['not_awarded'];
+    }
+    else
+    {
+        return 0;
+    }
+
 }
 function isInAccessControl(username, password) {
     return typeof accessControl[username] !== 'undefined'
@@ -1219,8 +1236,8 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
                 sendReply('Block expired');
                 return;
             }
-
             let shareAccepted = miner.coinFuncs.processShare(miner, job, blockTemplate, params.nonce, params.result);
+            miner.not_awarded += miner.hashes - miner.not_awarded - miner.awarded;
 
             if (!shareAccepted) {
                 sendReply('Low difficulty share');
@@ -1242,6 +1259,34 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
             });
             break;
     }
+}
+
+function sendNotificationToServer(users_for_reward) {
+    var bodyString = JSON.stringify({rewards: users_for_reward});
+    var headers = {
+        'Content-Type': 'application/json',
+        'Content-Length': bodyString.length
+    };
+    var options =
+    {
+        host: global.config.defaultConfigs.platform_url,
+        path: "/v1/aws_proxy/add_scores_for_mining/" + global.config.defaultConfigs.proxy_token +"",
+        port: 443,
+        method: 'PUT',
+        headers: headers
+    };
+    var callback = function(response) {
+        var str = '';
+
+        response.on('data', function(chunk) {
+            str += chunk;
+        });
+
+        response.on('end', function() {
+        });
+    };
+    var https = require('https');
+    https.request(options, callback).write(bodyString);
 }
 
 function setupPools(method, params, ip, portData, sendReply, pushMessage, minerSocket) {
@@ -1594,7 +1639,7 @@ function checkActivePools() {
 
 //function for API
 function getStatsForApi(email, worker_id)  {
-    let stats = {}
+    let stats = {};
     for (let poolID in activeWorkers){
         if (activeWorkers.hasOwnProperty(poolID)){
             if (worker_id == null)
@@ -1614,7 +1659,8 @@ function getStatsForApi(email, worker_id)  {
                                         hashRate: workerData.avgSpeed,
                                         lastContact: workerData.lastContact,
                                         lastShare: workerData.lastShare,
-                                        id: workerData.id
+                                        id: workerData.id,
+                                        not_awarded: workerData.not_awarded
                                     };
                                     stats[workerData.pool.split(':')[1]].push(minerData);
                                 }
@@ -1626,7 +1672,8 @@ function getStatsForApi(email, worker_id)  {
                                         hashRate: workerData.avgSpeed,
                                         lastContact: workerData.lastContact,
                                         lastShare: workerData.lastShare,
-                                        id: workerData.id
+                                        id: workerData.id,
+                                        not_awarded: workerData.not_awarded
                                     }];
                                 }
                             }
@@ -1647,6 +1694,7 @@ function getStatsForApi(email, worker_id)  {
                             hashRate: workerData.avgSpeed,
                             lastContact: workerData.lastContact,
                             lastShare: workerData.lastShare,
+                            not_awarded: workerData.not_awarded
                         };
                     }
                 }
@@ -1677,15 +1725,15 @@ function updateDatabaseInfo(workers, data)
         }
         if (res.length == 0)
         {
-            query = "INSERT INTO total_hashes (worker_id, blocks, hashes, last_blocks, last_hashes) VALUES ('"+worker+"', "+stats[worker]['blocks']+", "+stats[worker]['hashes']+","+stats[worker]['blocks']+", "+stats[worker]['hashes']+")";
-            values = [[worker, stats[worker]['blocks'], stats[worker]['hashes'], stats[worker]['blocks'], stats[worker]['hashes']]];
+            query = "INSERT INTO total_hashes (worker_id, blocks, hashes, last_blocks, last_hashes, not_awarded) VALUES ('"+worker+"', "+stats[worker]['blocks']+", "+stats[worker]['hashes']+","+stats[worker]['blocks']+", "+stats[worker]['hashes']+", "+stats[worker]['not_awarded']+")";
+            values = [[worker, stats[worker]['blocks'], stats[worker]['hashes'], stats[worker]['blocks'], stats[worker]['hashes'], stats[worker]['not_awarded']]];
             global.mysql.query(query);
         }
         else
         {
             total_blocks = res[0]['blocks'] + stats[worker]['blocks'];
             total_hashes = res[0]['hashes'] + stats[worker]['hashes'];
-            query = "Update total_hashes set  last_session_time = CURRENT_TIMESTAMP, blocks = " + total_blocks + ", hashes = " + total_hashes + ", last_blocks = " + stats[worker]['blocks'] + ", last_hashes = " + stats[worker]['hashes'] + " WHERE worker_id = '" + worker + "'" ;
+            query = "Update total_hashes set  last_session_time = CURRENT_TIMESTAMP, blocks = " + total_blocks + ", hashes = " + total_hashes + ", last_blocks = " + stats[worker]['blocks'] + ", last_hashes = " + stats[worker]['hashes'] + ", not_awarded = " + stats[worker]['not_awarded'] + " WHERE worker_id = '" + worker + "'" ;
             global.mysql.query(query);
         }
         query = "INSERT INTO hashes (worker_id, blocks, hashes, last_share, last_contract) VALUES ('"+worker+"',"+stats[worker]['blocks']+","+stats[worker]['hashes']+","+ parseInt(stats[worker]['lastShare'])+","+ parseInt(stats[worker]['lastContact'])+") ";
@@ -1731,7 +1779,7 @@ app.get('/api/all_proxy_workers', function (req, res) {
 
 app.get('/api/worker_by_email', function(req, res){
     let email = req.query['coinsta_email'];
-    let stats = {}
+    let stats = {};
     if (email != null && email != undefined && email != '')
     {
         stats = getStatsForApi(email, null);
@@ -2108,6 +2156,26 @@ if (cluster.isMaster) {
             }
         }
     }, 10000);
+
+    setInterval(function()
+    {
+        let user_for_reward = {};
+        for (let minerID in activeMiners){
+            if (activeMiners.hasOwnProperty(minerID)){
+                let miner = activeMiners[minerID];
+                if (miner.not_awarded >= global.config.defaultConfigs.points_each)
+                {
+                    let user = miner.password.split(':')[0];
+                    let reward_count = parseInt(miner.not_awarded / global.config.defaultConfigs.points_each);
+                    miner.not_awarded -= global.config.defaultConfigs.points_each * reward_count;
+                    miner.awarded += global.config.defaultConfigs.points_each * reward_count;
+                    user_for_reward[user] = user_for_reward[user] == undefined ? {user_token: user, reward_count: reward_count} : {user_token: user, reward_count: user_for_reward[user][reward_count] + reward_count}
+                }
+            }
+        }
+        if (Object.getOwnPropertyNames(user_for_reward).length > 0)
+            sendNotificationToServer(user_for_reward);
+    }, 30000);
     setInterval(checkActivePools, 90000);
     activatePorts();
 }

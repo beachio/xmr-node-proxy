@@ -22,5 +22,6 @@ CREATE TABLE `total_hashes` (
   `last_blocks` int(11) DEFAULT '0',
   `last_hashes` int(11) DEFAULT '0',
   `last_session_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `not_awarded` INT(11) DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

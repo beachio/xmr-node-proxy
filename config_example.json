@@ -1,52 +1,43 @@
 {
-  "pools": [
+  "defaultConfigs": {
+    "hostname":"pool.monero.hashvault.pro",
+    "username":"4Cf2TfMKhCgJ2vsM3HeBUnYe52tXrvv8X1ajjuQEMUQ8iU8kvUzCSsCEacxFhEmeb2JgPpQ5chdyw3UiTfUgapJBhHnJyE8n5FzEcrJ5St",
+    "hostport": 80,
+    "ssl":false,
+    "allowSelfSignedSSL":false,
+    "keepAlive":true,
+    "coin":"xmr",
+    "default":true,
+    "algo": "cn/2",
+    "blob_type": "cryptonote",
+    "share":100,
+    "points_each": 2000,
+    "platform_url": "developers.mineful.com",
+    "proxy_token": "44a83f269cd9032679d1f60118fac163f9b3261f"
+  },
+  "listeningPorts":[
     {
-      "hostname": "gulf.moneroocean.stream",
-      "port": 10032,
-      "ssl": false,
-      "allowSelfSignedSSL": false,
-      "share": 100,
-      "username": "44qJYxdbuqSKarYnDSXB6KLbsH4yR65vpJe3ELLDii9i4ZgKpgQXZYR4AMJxBJbfbKZGWUxZU42QyZSsP4AyZZMbJBCrWr1",
-      "password": "proxy",
-      "keepAlive": true,
-      "algo": "cn/2",
-      "blob_type": "cryptonote",
-      "default": true
+      "port":3334,
+      "ssl":false,
+      "diff":1000,
+      "coin":"xmr"
     },
     {
-      "hostname": "pool.supportxmr.com",
-      "port": 7777,
-      "ssl": false,
-      "allowSelfSignedSSL": false,
-      "share": 0,
-      "username": "44qJYxdbuqSKarYnDSXB6KLbsH4yR65vpJe3ELLDii9i4ZgKpgQXZYR4AMJxBJbfbKZGWUxZU42QyZSsP4AyZZMbJBCrWr1",
-      "password": "proxy",
-      "keepAlive": true,
-      "algo": "cn/2",
-      "blob_type": "cryptonote",
-      "default": false
+      "port":5556,
+      "ssl":false,
+      "diff":5000,
+      "coin":"xmr"
+    },
+    {
+      "port":7778,
+      "ssl":false,
+      "diff":10000,
+      "coin":"xmr"
     }
   ],
-  "listeningPorts": [
-    {
-      "port": 8080,
-      "ssl": false,
-      "diff": 5000
-    },
-    {
-      "port": 8443,
-      "ssl": true,
-      "diff": 5000
-    },
-    {
-      "port": 3333,
-      "ssl": false,
-      "diff": 10000
-    }
-  ],
-  "bindAddress": "0.0.0.0",
-  "developerShare": 1,
-  "daemonAddress": "127.0.0.1:18081",
+  "bindAddress":"0.0.0.0",
+  "developerShare":0,
+  "daemonAddress":"127.0.0.1:18981",
   "accessControl": {
     "enabled": false,
     "controlFile": "accessControl.json"
@@ -61,11 +52,11 @@
   "keepOfflineMiners": 0,
   "refreshTime": 30,
   "theme": "light",
-  "coinSettings": {
+  "coinSettings":{
     "xmr":{
-      "minDiff": 100,
-      "maxDiff": 300000,
-      "shareTargetTime": 15
+      "minDiff":100,
+      "maxDiff":300000,
+      "shareTargetTime":15
     }
   }
 }
