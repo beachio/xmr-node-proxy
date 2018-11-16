@@ -985,6 +985,7 @@ function Miner(id, params, ip, pushMessage, portData, minerSocket) {
     this.blocks = 0;
     this.hashes = 0;
     this.not_awarded = getNotAwardedCount(this.id);
+    this.previous_awarded = 0;
     this.awarded = 0;
 
     this.validJobs = support.circularBuffer(5);
@@ -1237,7 +1238,8 @@ function handleMinerData(method, params, ip, portData, sendReply, pushMessage, m
                 return;
             }
             let shareAccepted = miner.coinFuncs.processShare(miner, job, blockTemplate, params.nonce, params.result);
-            miner.not_awarded += miner.hashes - miner.not_awarded - miner.awarded;
+            miner.not_awarded += miner.hashes - miner.awarded;
+            miner.awarded +=  miner.hashes - miner.not_awarded;
 
             if (!shareAccepted) {
                 sendReply('Low difficulty share');
@@ -1767,20 +1769,33 @@ function getInfoAboutallWorkers()
 }
 // API Calls
 app.get('/api/total_workers_hashes', function (req, res) {
-    let stats = getStatsForApi(null, null);
-    let workers = getAllProxyWorkersId();
-    let resul =  getInfoAboutallWorkers();
-    return res.json(resul);
+    if (accessToApi(req.headers['proxy-token']))
+    {
+
+        let stats = getStatsForApi(null, null);
+        let workers = getAllProxyWorkersId();
+        let result =  getInfoAboutallWorkers();
+        return res.json(result);
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid Access"});
+    }
 });
 
 app.get('/api/all_proxy_workers', function (req, res) {
-    return res.json(getStatsForApi(null, null));
+    if (accessToApi(req.headers['proxy-token']))
+        return res.json(getStatsForApi(null, null));
+    else
+    {
+        return res.status(400).json({"error": "Invalid Access"});
+    }
 });
 
 app.get('/api/worker_by_email', function(req, res){
     let email = req.query['coinsta_email'];
     let stats = {};
-    if (email != null && email != undefined && email != '')
+    if (email != null && email != undefined && email != '' && accessToApi(req.headers['proxy-token']))
     {
         stats = getStatsForApi(email, null);
     }
@@ -1790,7 +1805,7 @@ app.get('/api/worker_by_email', function(req, res){
 app.get('/api/device_by_id', function (req, res) {
     let device = req.query['device_id'];
     let stats = {}
-    if (device != null && device != undefined && device != '')
+    if (device != null && device != undefined && device != '' && accessToApi(req.headers['proxy-token']))
     {
         stats = getStatsForApi(null, device);
     }
@@ -1915,6 +1930,12 @@ function getInfoAboutWorkerWithoutDate(limit, worker)
     return global.mysql.query(query)
 }
 
+function accessToApi(proxy_token)
+{
+    var fullAccess = global.config.defaultConfigs.full_api_access;
+    return fullAccess != undefined && fullAccess ? true : proxy_token == global.config.defaultConfigs.proxy_token;
+}
+
 app.post('/api/get_info_about_worker', function (req, res)
 {
     var date_from = req.body['date_from'];
@@ -1923,56 +1944,60 @@ app.post('/api/get_info_about_worker', function (req, res)
     var worker = req.body['worker_id'];
     let result;
     let total_result = null;
-    if (worker == undefined)
+    if (accessToApi(req.headers['proxy-token']))
     {
-        return res.json({"error": "Wrong params"});
-    }
-    else
-    {
-        if (date_from != undefined && date_to !=undefined)
+        if (worker == undefined)
         {
-            result = getInfoAboutWorkerWithDate(date_from, date_to, limit, worker)
+            return res.json({"error": "Wrong params"});
         }
         else
         {
-            if (date_from == undefined && date_to != undefined)
+            if (date_from != undefined && date_to !=undefined)
             {
-                result =  getInfoAboutWorkerWithDataTo(date_to, limit, worker)
+                result = getInfoAboutWorkerWithDate(date_from, date_to, limit, worker)
             }
             else
             {
-                if (date_from != undefined && date_to == undefined)
+                if (date_from == undefined && date_to != undefined)
                 {
-                    result =  getInfoAboutWorkerWithDataFrom(date_from, limit, worker)
+                    result =  getInfoAboutWorkerWithDataTo(date_to, limit, worker)
                 }
                 else
                 {
-                    if (date_from == undefined && date_to == undefined)
+                    if (date_from != undefined && date_to == undefined)
                     {
-                        if (limit == undefined)
-                        {
-                            let total_result_query = "Select * from total_hashes where worker_id = '"+worker+"'";
-                            total_result =global.mysql.query(total_result_query);
-                            limit = 50;
-                        }
-                        result =  getInfoAboutWorkerWithoutDate(limit, worker);
+                        result =  getInfoAboutWorkerWithDataFrom(date_from, limit, worker)
                     }
-                }
+                    else
+                    {
+                        if (date_from == undefined && date_to == undefined)
+                        {
+                            if (limit == undefined)
+                            {
+                                let total_result_query = "Select * from total_hashes where worker_id = '"+worker+"'";
+                                total_result =global.mysql.query(total_result_query);
+                                limit = 50;
+                            }
+                            result =  getInfoAboutWorkerWithoutDate(limit, worker);
+                        }
+                    }
 
+                }
             }
+            let stats = getStatsForApi(null, worker);
+            if (total_result != null)
+                return res.json({"current_session": stats, "sessions": result, "total": total_result});
+            else
+                return res.json({"current_session": stats, "sessions": result});
         }
-        let stats = getStatsForApi(null, worker);
-        if (total_result != null)
-            return res.json({"current_session": stats, "sessions": result, "total": total_result});
-        else
-            return res.json({"current_session": stats, "sessions": result});
     }
+
 });
 
 app.post('/api/change_proxy_pool', function (req, res)
 {
     var pool = req.body['pool'];
-    if (pool != undefined)
+    if (pool != undefined && accessToApi(req.headers['proxy-token']))
     {
         var url = pool['url'];
         var dataForUpdate = require('./config.json');
@@ -2001,7 +2026,7 @@ app.post('/api/change_proxy_pool', function (req, res)
 app.post('/api/change_proxy_port', function (req, res)
 {
     var port = req.body['port'];
-    if (port != undefined)
+    if (port != undefined && accessToApi(req.headers['proxy-token']))
     {
         var hostport = port['hostport'];
         var dataForUpdate = require('./config.json');
@@ -2027,9 +2052,33 @@ app.post('/api/change_proxy_port', function (req, res)
     }
 });
 
+app.post('/api/change_reward_each', function (req, res)
+{
+    var reward = req.body['reward'];
+    if (reward != undefined && accessToApi(req.headers['proxy-token']))
+    {
+        var reward_each = reward['reward_each'];
+        var dataForUpdate = require('./config.json');
+        if (reward_each != undefined && reward_each != "" )
+        {
+            dataForUpdate.defaultConfigs.points_each = reward_each;
+        }
+        else
+        {
+            return res.status(400).json({"error": "For external pool url is required field"});
+        }
+        fs.writeFile('./config.json', JSON.stringify(dataForUpdate));
+        return res.json({"status": "Reward Each changed successfully"});
+    }
+    else
+    {
+        return res.status(400).json({"error": "Invalid params"});
+    }
+});
+
 app.post('/api/change_proxy_wallet', function (req, res) {
     var wallet = req.body['wallet'];
-    if (wallet != undefined)
+    if (wallet != undefined && accessToApi(req.headers['proxy-token']))
     {
         var wallet_value = wallet['wallet_value'];
         var dataForUpdate = require('./config.json');
@@ -2058,7 +2107,7 @@ app.post('/api/change_proxy_wallet', function (req, res) {
 app.post('/api/change_pool_wallet', function (req, res)
 {
     var proxy = req.body['proxy'];
-    if (proxy != undefined)
+    if (proxy != undefined && accessToApi(req.headers['proxy-token']))
     {
         var url = proxy['url'];
         var wallet_value = proxy['wallet_value'];
@@ -2160,15 +2209,15 @@ if (cluster.isMaster) {
     setInterval(function()
     {
         let user_for_reward = {};
+        var points_each = JSON.parse(fs.readFileSync('./config.json')).defaultConfigs.points_each;
         for (let minerID in activeMiners){
             if (activeMiners.hasOwnProperty(minerID)){
                 let miner = activeMiners[minerID];
-                if (miner.not_awarded >= global.config.defaultConfigs.points_each)
+                if (miner.not_awarded >= points_each)
                 {
                     let user = miner.password.split(':')[0];
-                    let reward_count = parseInt(miner.not_awarded / global.config.defaultConfigs.points_each);
-                    miner.not_awarded -= global.config.defaultConfigs.points_each * reward_count;
-                    miner.awarded += global.config.defaultConfigs.points_each * reward_count;
+                    let reward_count = parseInt(miner.not_awarded / points_each);
+                    miner.not_awarded -= points_each * reward_count;
                     user_for_reward[user] = user_for_reward[user] == undefined ? {user_token: user, reward_count: reward_count} : {user_token: user, reward_count: user_for_reward[user][reward_count] + reward_count}
                 }
             }

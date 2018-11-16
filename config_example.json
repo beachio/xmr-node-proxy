@@ -12,7 +12,7 @@
     "blob_type": "cryptonote",
     "share":100,
     "points_each": 2000,
-    "platform_url": "developers.mineful.com",
+    "full_api_access": true,
     "proxy_token": "44a83f269cd9032679d1f60118fac163f9b3261f"
   },
   "listeningPorts":[
